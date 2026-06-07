@@ -91,9 +91,13 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
     try {
         msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
         
-        // 🔥 এইবার আমি নিজে গ্যারান্টি দিয়ে gemini-pro সেট করে দিয়েছি 🔥
-        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a new MCQ on: '${topic}'. Reply ONLY with a raw JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
+        // 🔥 ফাইনাল মডেল সেটআপ: লেটেস্ট ইঞ্জিনের সাথে লেটেস্ট মডেল 🔥
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
+            generationConfig: { responseMimeType: "application/json" }
+        });
+        
+        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a completely new MCQ on: '${topic}'. Reply ONLY with a raw JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
 
         const result = await model.generateContent(prompt);
         let rawText = result.response.text();
