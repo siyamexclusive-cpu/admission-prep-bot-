@@ -1,10 +1,8 @@
 const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function sendMainMenu(ctx, chatId) {
     await supabase.from('exam_users').upsert({ chat_id: chatId, current_step: 'MAIN_MENU' });
@@ -86,25 +84,44 @@ bot.action(/^exam_/, async (ctx) => {
     await generateAndSendQuestion(ctx, ctx.chat.id, subjectName, true, 0, 1);
 });
 
+// 🔥 গুগলের প্যাকেজ ছাড়াই ডাইরেক্ট API কানেকশন (Full Bypass) 🔥
 async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score = 0, qNum = 1) {
     let msg;
     try {
         msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
         
-        // 🔥 ফাইনাল মডেল সেটআপ: লেটেস্ট ইঞ্জিনের সাথে লেটেস্ট মডেল 🔥
-        const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash",
-            generationConfig: { responseMimeType: "application/json" }
-        });
+        const apiKey = process.env.GEMINI_API_KEY;
         
-        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a completely new MCQ on: '${topic}'. Reply ONLY with a raw JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
+        // API Key চেক (ভুল করে Vertex Key দিলে এখানেই ধরে ফেলবে)
+        if (!apiKey || !apiKey.startsWith('AIzaSy')) {
+            throw new Error("আপনার API Key টি সঠিক নয়! দয়া করে Vercel-এ গিয়ে 'AIzaSy' দিয়ে শুরু হওয়া আসল Key টি দিন।");
+        }
+        
+        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a completely new MCQ on: '${topic}'. Reply ONLY with a JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
 
-        const result = await model.generateContent(prompt);
-        let rawText = result.response.text();
+        // সরাসরি গুগলের সার্ভারে রিকোয়েস্ট (কোনো প্যাকেজ লাগবে না)
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: { responseMimeType: "application/json" }
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Google API Reject করেছে: ${errorData.error?.message || 'অজানা এরর'}`);
+        }
+
+        const data = await response.json();
+        if (!data.candidates || data.candidates.length === 0) throw new Error("AI কোনো উত্তর দেয়নি।");
+
+        let rawText = data.candidates[0].content.parts[0].text;
         
         const startIdx = rawText.indexOf('{');
         const endIdx = rawText.lastIndexOf('}');
-        if (startIdx === -1) throw new Error("Invalid AI Response format.");
+        if (startIdx === -1) throw new Error("AI সঠিক ফরম্যাটে উত্তর দেয়নি।");
         
         const qData = JSON.parse(rawText.substring(startIdx, endIdx + 1));
         qData.is_exam = isExam; qData.exam_score = score; qData.exam_q_num = qNum;
