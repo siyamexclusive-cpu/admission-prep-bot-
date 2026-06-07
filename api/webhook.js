@@ -5,7 +5,6 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// 🔥 API Key চেক করা হচ্ছে 🔥
 const geminiKey = process.env.GEMINI_API_KEY || "MISSING";
 const genAI = new GoogleGenerativeAI(geminiKey);
 
@@ -109,7 +108,8 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
 
         msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // 🔥 এখানে মডেলের নাম gemini-1.5-flash থেকে পরিবর্তন করে gemini-pro করে দেওয়া হয়েছে 🔥
+        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
         const prompt = `Act as an expert admission test teacher in Bangladesh.
         Create a completely new, standard MCQ question on the topic/subject: '${topic}'.
         You must reply ONLY with a raw JSON object containing exactly these keys: 'question', 'options' (array of 4 strings), 'correct_option_index' (integer 0 to 3), and 'explanation' (string in Bengali).`;
@@ -143,8 +143,6 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
         if (msg) await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
         
         const retryAction = isExam ? 'main_menu' : `topic_${topic}`;
-        
-        // 🔥 আসল এররটি এখানে প্রিন্ট করবে 🔥
         return ctx.reply(`❌ *সমস্যা ধরা পড়েছে:*\n\`${error.message}\`\n\nএই মেসেজটির একটি স্ক্রিনশট দিন!`, Markup.inlineKeyboard([
             [Markup.button.callback('🔄 আবার চেষ্টা করুন', retryAction)],
             [Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]
