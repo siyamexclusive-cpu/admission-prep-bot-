@@ -4,7 +4,6 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function sendMainMenu(ctx, chatId) {
     await supabase.from('exam_users').upsert({ chat_id: chatId, current_step: 'MAIN_MENU' });
@@ -86,31 +85,33 @@ bot.action(/^exam_/, async (ctx) => {
     await generateAndSendQuestion(ctx, ctx.chat.id, subjectName, true, 0, 1);
 });
 
-// 🔥 সুপার অটো-সুইচ AI সিস্টেম 🔥
 async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score = 0, qNum = 1) {
     let msg;
     try {
         msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
-        
+
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) throw new Error("API Key Vercel-এ পাওয়া যায়নি!");
+
+        // 🔥 সব ধরণের Key সাপোর্ট করবে 🔥
+        const genAI = new GoogleGenerativeAI(apiKey);
         const prompt = `Act as an expert admission test teacher in Bangladesh. Create a new MCQ on: '${topic}'. Reply ONLY with JSON: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
 
-        // বট একটার পর একটা মডেল ট্রাই করবে, যেটা কাজ করবে সেটা নিয়ে নেবে
         const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"];
         let rawText = null;
-        let finalError = null;
 
         for (let modelName of modelsToTry) {
             try {
                 const model = genAI.getGenerativeModel({ model: modelName });
                 const result = await model.generateContent(prompt);
                 rawText = result.response.text();
-                if (rawText) break; // কাজ হয়ে গেলে লুপ বন্ধ করে দেবে
+                if (rawText) break;
             } catch (e) {
-                finalError = e; // কাজ না করলে পরের মডেলে যাবে
+                console.error(`${modelName} failed:`, e.message);
             }
         }
 
-        if (!rawText) throw new Error("আপনার API Key দিয়ে গুগলের কোনো মডেলই কাজ করছে না। দয়া করে Google AI Studio থেকে নতুন একটি Key বানিয়ে নিন।");
+        if (!rawText) throw new Error("আপনার API Key টি কাজ করছে না। সার্ভার ডাউন থাকতে পারে।");
         
         const startIdx = rawText.indexOf('{');
         const endIdx = rawText.lastIndexOf('}');
