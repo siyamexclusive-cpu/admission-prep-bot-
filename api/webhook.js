@@ -90,14 +90,17 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
     let msg;
     try {
         msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const prompt = `Create a new admission MCQ on: '${topic}'. Reply ONLY with JSON: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Bengali explanation"}`;
+        
+        // 🔥 এইবার আমি নিজে গ্যারান্টি দিয়ে gemini-pro সেট করে দিয়েছি 🔥
+        const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a new MCQ on: '${topic}'. Reply ONLY with a raw JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
 
         const result = await model.generateContent(prompt);
         let rawText = result.response.text();
+        
         const startIdx = rawText.indexOf('{');
         const endIdx = rawText.lastIndexOf('}');
-        if (startIdx === -1) throw new Error("Invalid AI Response");
+        if (startIdx === -1) throw new Error("Invalid AI Response format.");
         
         const qData = JSON.parse(rawText.substring(startIdx, endIdx + 1));
         qData.is_exam = isExam; qData.exam_score = score; qData.exam_q_num = qNum;
@@ -105,6 +108,7 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
         await supabase.from('exam_users').update({ current_question: qData }).eq('chat_id', chatId);
         const buttons = qData.options.map((opt, idx) => [Markup.button.callback(opt, `ans_${idx}`)]);
         if (!isExam) buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]);
+        
         if (msg) await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(()=>{});
         return ctx.reply(`${isExam ? `⏱️ *প্রশ্ন ${qNum}/5:*` : `📝 *প্রশ্ন:*`} ${qData.question}`, Markup.inlineKeyboard(buttons));
     } catch (error) {
@@ -131,7 +135,7 @@ bot.action(/^ans_/, async (ctx) => {
         }
     }
 
-    let replyText = isCorrect ? `✅ সঠিক!` : `❌ ভুল! সঠিক: ${qData.options[qData.correct_option_index]}`;
+    let replyText = isCorrect ? `✅ সঠিক!` : `❌ ভুল! সঠিক উত্তর: *${qData.options[qData.correct_option_index]}*`;
     if (!isCorrect) await supabase.from('revision_vault').insert({ chat_id: ctx.chat.id, subject: user.selected_subject, topic: user.selected_topic, question: qData.question, options: qData.options, correct_option: qData.options[qData.correct_option_index], explanation: qData.explanation });
     
     await supabase.from('exam_users').update({ current_question: null }).eq('chat_id', ctx.chat.id);
