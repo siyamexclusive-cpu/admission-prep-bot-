@@ -6,29 +6,22 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ----------------- মেইন মেনু ফাংশন (১০০% কাজ করবে) -----------------
+// ----------------- মেইন মেনু -----------------
 async function sendMainMenu(ctx, chatId) {
     await supabase.from('exam_users').upsert({ chat_id: chatId, current_step: 'MAIN_MENU' });
     const intro = `🎓 *বিশ্ববিদ্যালয় ভর্তি প্রস্তুতি বটে স্বাগতম!*\n\n`
                 + `আপনার দুর্বল বিষয়গুলোকে শক্তিশালী করতে আমি তৈরি।\n`
-                + `🔹 আনলিমিটেড স্মার্ট প্রশ্ন\n🔹 ভুল উত্তরের বাংলা লেকচার\n🔹 রিভিশন ফোল্ডার\n\n`
+                + `🔹 আনলিমিটেড স্মার্ট প্রশ্ন\n🔹 ভুল উত্তরের বাংলা লেকচার\n🔹 লাইভ পরীক্ষা\n\n`
                 + `👉 *কী করতে চান তা সিলেক্ট করুন:*`;
     
     return ctx.replyWithMarkdown(intro, Markup.inlineKeyboard([
         [Markup.button.callback('📖 সাধারণ অনুশীলন', 'practice_mode')],
-        [Markup.button.callback('⏱️ লাইভ পরীক্ষা (Exam Mode)', 'exam_mode_select')],
+        [Markup.button.callback('⏱️ লাইভ পরীক্ষা (Exam)', 'exam_mode_select')],
         [Markup.button.callback('📁 আমার রিভিশন ফোল্ডার', 'revision_folder')]
     ]));
 }
 
-bot.command('start', async (ctx) => {
-    try {
-        await sendMainMenu(ctx, ctx.chat.id);
-    } catch (e) {
-        console.error("Start Error:", e);
-    }
-});
-
+bot.command('start', async (ctx) => sendMainMenu(ctx, ctx.chat.id));
 bot.action('main_menu', async (ctx) => {
     ctx.answerCbQuery().catch(()=>{});
     return sendMainMenu(ctx, ctx.chat.id);
@@ -37,8 +30,6 @@ bot.action('main_menu', async (ctx) => {
 // ----------------- অনুশীলন মোড -----------------
 bot.action('practice_mode', async (ctx) => {
     ctx.answerCbQuery().catch(()=>{});
-    await supabase.from('exam_users').update({ current_step: 'SELECTING_SUBJECT' }).eq('chat_id', ctx.chat.id);
-    
     return ctx.reply('📚 *কোন বিষয়টি অনুশীলন করতে চান?*', Markup.inlineKeyboard([
         [Markup.button.callback('🇬🇧 English Grammar', 'subj_english')],
         [Markup.button.callback('🌍 সাধারণ জ্ঞান (GK)', 'subj_gk')],
@@ -61,7 +52,7 @@ bot.action(/^subj_/, async (ctx) => {
         topics = ['সন্ধি ও সমাস', 'কারক ও বিভক্তি', 'শুদ্ধ-অশুদ্ধ'];
     }
 
-    await supabase.from('exam_users').update({ current_step: 'SELECTING_TOPIC', selected_subject: subjectName }).eq('chat_id', ctx.chat.id);
+    await supabase.from('exam_users').update({ selected_subject: subjectName }).eq('chat_id', ctx.chat.id);
     const buttons = topics.map(t => [Markup.button.callback(t, `topic_${t}`)]);
     
     ctx.answerCbQuery().catch(()=>{});
@@ -69,62 +60,94 @@ bot.action(/^subj_/, async (ctx) => {
 });
 
 bot.action(/^topic_/, async (ctx) => {
-    ctx.answerCbQuery('অপেক্ষা করুন...').catch(()=>{});
+    ctx.answerCbQuery('প্রশ্ন তৈরি হচ্ছে...').catch(()=>{});
     const topic = ctx.callbackQuery.data.replace('topic_', '');
-    await supabase.from('exam_users').update({ selected_topic: topic, current_step: 'PRACTICING' }).eq('chat_id', ctx.chat.id);
-    await generateAndSendQuestion(ctx, ctx.chat.id, topic);
+    await supabase.from('exam_users').update({ selected_topic: topic }).eq('chat_id', ctx.chat.id);
+    await generateAndSendQuestion(ctx, ctx.chat.id, topic, false);
 });
 
 bot.action('next_question', async (ctx) => {
-    ctx.answerCbQuery('নতুন প্রশ্ন তৈরি হচ্ছে...').catch(()=>{});
+    ctx.answerCbQuery('নতুন প্রশ্ন...').catch(()=>{});
     const { data: user } = await supabase.from('exam_users').select('selected_topic').eq('chat_id', ctx.chat.id).single();
-    await generateAndSendQuestion(ctx, ctx.chat.id, user.selected_topic);
+    await generateAndSendQuestion(ctx, ctx.chat.id, user.selected_topic, false);
 });
 
-// ----------------- Google AI JSON Mode (প্রশ্ন তৈরি) -----------------
-async function generateAndSendQuestion(ctx, chatId, topic) {
+// ----------------- লাইভ পরীক্ষা (Exam Mode) -----------------
+bot.action('exam_mode_select', async (ctx) => {
+    ctx.answerCbQuery().catch(()=>{});
+    return ctx.reply('⏱️ *লাইভ পরীক্ষা (Exam Mode)*\n\nকোন বিষয়ের উপর ৫ মার্কের পরীক্ষা দিতে চান?', Markup.inlineKeyboard([
+        [Markup.button.callback('🇬🇧 English Grammar', 'exam_english')],
+        [Markup.button.callback('🌍 সাধারণ জ্ঞান (GK)', 'exam_gk')],
+        [Markup.button.callback('🇧🇩 বাংলা', 'exam_bangla')],
+        [Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]
+    ]));
+});
+
+bot.action(/^exam_/, async (ctx) => {
+    ctx.answerCbQuery('পরীক্ষা শুরু হচ্ছে...').catch(()=>{});
+    const subjRaw = ctx.callbackQuery.data.replace('exam_', '');
+    let subjectName = '';
+
+    if (subjRaw === 'english') subjectName = 'English Grammar';
+    else if (subjRaw === 'gk') subjectName = 'সাধারণ জ্ঞান';
+    else if (subjRaw === 'bangla') subjectName = 'বাংলা';
+
+    await supabase.from('exam_users').update({ selected_subject: subjectName }).eq('chat_id', ctx.chat.id);
+    
+    await ctx.reply(`🚀 *${subjectName}* এর উপর লাইভ পরীক্ষা শুরু হলো!\n(মোট প্রশ্ন: ৫টি)`);
+    await generateAndSendQuestion(ctx, ctx.chat.id, subjectName, true, 0, 1);
+});
+
+// ----------------- AI প্রশ্ন তৈরি (সুপার এক্সট্রাক্টর) -----------------
+async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score = 0, qNum = 1) {
     let msg;
     try {
-        msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে... দয়া করে অপেক্ষা করুন।*', { parse_mode: 'Markdown' });
+        msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
 
-        // গুগলের লেটেস্ট JSON Mode চালু করা হলো (এরর জিরো হয়ে যাবে)
-        const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash",
-            generationConfig: { responseMimeType: "application/json" } 
-        });
-        
-        const prompt = `University Admission test-এর স্ট্যান্ডার্ড অনুযায়ী '${topic}' এর উপর একটি সম্পূর্ণ নতুন MCQ প্রশ্ন তৈরি করো। 
-        রেসপন্সটি strictly এই JSON ফরম্যাটে হবে:
-        {
-          "question": "এখানে প্রশ্নটি থাকবে",
-          "options": ["অপশন A", "অপশন B", "অপশন C", "অপশন D"],
-          "correct_option_index": 1, 
-          "explanation": "কেন এটি সঠিক এবং বাকিগুলো ভুল তার একটি চমৎকার বাংলা লেকচার/ব্যাখ্যা"
-        }`;
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const prompt = `Act as an expert admission test teacher in Bangladesh.
+        Create a completely new, standard MCQ question on the topic/subject: '${topic}'.
+        You must reply ONLY with a raw JSON object containing exactly these keys: 'question', 'options' (array of 4 strings), 'correct_option_index' (integer 0 to 3), and 'explanation' (string in Bengali).`;
 
         const result = await model.generateContent(prompt);
-        const rawText = result.response.text();
+        let rawText = result.response.text();
+
+        // গুগল এআই-এর অতিরিক্ত কথা কেটে শুধু আসল JSON বের করার কোড
+        const startIdx = rawText.indexOf('{');
+        const endIdx = rawText.lastIndexOf('}');
+        if (startIdx === -1 || endIdx === -1) throw new Error("JSON not found in AI response");
+        
+        rawText = rawText.substring(startIdx, endIdx + 1);
         const qData = JSON.parse(rawText);
+
+        // ডাটাবেসে নতুন কলাম ছাড়াই পরীক্ষার ডাটা সেভ করার ট্রিক
+        qData.is_exam = isExam;
+        qData.exam_score = score;
+        qData.exam_q_num = qNum;
 
         await supabase.from('exam_users').update({ current_question: qData }).eq('chat_id', chatId);
 
         const buttons = qData.options.map((opt, idx) => [Markup.button.callback(opt, `ans_${idx}`)]);
-        buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]);
+        if (!isExam) buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]); // পরীক্ষার মাঝে মেনু বাটন থাকবে না
 
         if (msg) await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(()=>{});
-        return ctx.reply(`📝 *প্রশ্ন:* ${qData.question}`, Markup.inlineKeyboard(buttons));
+        
+        const prefix = isExam ? `⏱️ *প্রশ্ন ${qNum}/5:*` : `📝 *প্রশ্ন:*`;
+        return ctx.reply(`${prefix} ${qData.question}`, Markup.inlineKeyboard(buttons));
 
     } catch (error) {
         console.error("🚨 AI Error:", error);
         if (msg) await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
-        return ctx.reply('❌ প্রশ্ন তৈরি করতে সাময়িক সমস্যা হয়েছে। (API Key লোড হতে সময় লাগতে পারে)', Markup.inlineKeyboard([
-            [Markup.button.callback('🔄 আবার চেষ্টা করুন', `topic_${topic}`)],
+        
+        const retryAction = isExam ? 'main_menu' : `topic_${topic}`;
+        return ctx.reply('❌ প্রশ্ন তৈরি করতে সাময়িক সমস্যা হয়েছে। (Google AI সার্ভার ব্যস্ত)', Markup.inlineKeyboard([
+            [Markup.button.callback('🔄 আবার চেষ্টা করুন', retryAction)],
             [Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]
         ]));
     }
 }
 
-// ----------------- উত্তর যাচাই -----------------
+// ----------------- উত্তর যাচাই ও পরীক্ষার মার্কিং -----------------
 bot.action(/^ans_/, async (ctx) => {
     const selectedIdx = parseInt(ctx.callbackQuery.data.replace('ans_', ''));
     const chatId = ctx.chat.id;
@@ -135,6 +158,34 @@ bot.action(/^ans_/, async (ctx) => {
     if (!qData) return ctx.answerCbQuery('⚠️ এই প্রশ্নটির মেয়াদ শেষ।', { show_alert: true });
 
     const isCorrect = (selectedIdx === qData.correct_option_index);
+
+    // 🔥 লাইভ পরীক্ষার লজিক 🔥
+    if (qData.is_exam) {
+        ctx.answerCbQuery().catch(()=>{});
+        let newScore = isCorrect ? qData.exam_score + 1 : qData.exam_score;
+        let nextNum = qData.exam_q_num + 1;
+
+        // আগের প্রশ্নটি ডিলিট করে দেওয়া হলো যেন কেউ আবার উত্তর দিতে না পারে
+        await ctx.deleteMessage().catch(()=>{});
+
+        if (nextNum > 5) { // ৫টি প্রশ্ন শেষ হলে রেজাল্ট দেখাবে
+            await supabase.from('exam_users').update({ current_question: null }).eq('chat_id', chatId);
+            let passStatus = newScore >= 3 ? '✅ *উত্তীর্ণ (Passed!)*' : '❌ *অনুত্তীর্ণ (Failed)*';
+            
+            let finalMsg = `🏆 *আপনার পরীক্ষা শেষ!*\n\n`
+                         + `📚 বিষয়: ${user.selected_subject}\n`
+                         + `🎯 মোট প্রশ্ন: ৫টি\n`
+                         + `✅ সঠিক উত্তর: ${newScore}টি\n`
+                         + `📊 ফলাফল: ${passStatus}`;
+                         
+            return ctx.reply(finalMsg, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
+        } else { // পরবর্তী প্রশ্ন জেনারেট করবে
+            await generateAndSendQuestion(ctx, chatId, user.selected_subject, true, newScore, nextNum);
+            return;
+        }
+    }
+
+    // 📖 সাধারণ অনুশীলনের লজিক 📖
     let replyText = isCorrect ? `✅ *সঠিক উত্তর!* চমৎকার হয়েছে।\n\n` : `❌ *ভুল উত্তর!* \nসঠিক উত্তরটি হবে: *${qData.options[qData.correct_option_index]}*\n\n`;
 
     if (!isCorrect) {
@@ -182,33 +233,13 @@ bot.action('clear_revision', async (ctx) => {
     return ctx.reply('✅ রিভিশন ফোল্ডার ক্লিয়ার করা হয়েছে।', Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
 });
 
-// ----------------- লাইভ এক্সাম (Exam Mode) -----------------
-bot.action('exam_mode_select', async (ctx) => {
-    ctx.answerCbQuery().catch(()=>{});
-    return ctx.reply('⏱️ *লাইভ পরীক্ষা (Exam Mode)*\n\nকোন বিষয়ের উপর পরীক্ষা দিতে চান তা নির্বাচন করুন:', Markup.inlineKeyboard([
-        [Markup.button.callback('🇬🇧 English Grammar', 'exam_english')],
-        [Markup.button.callback('🌍 সাধারণ জ্ঞান (GK)', 'exam_gk')],
-        [Markup.button.callback('🇧🇩 বাংলা', 'exam_bangla')],
-        [Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]
-    ]));
-});
-
-bot.action(/^exam_/, async (ctx) => {
-    ctx.answerCbQuery().catch(()=>{});
-    return ctx.reply('🚀 এক্সাম মোডের মেইন লজিকটি (টাইমার ও স্কোরিং সিস্টেম) আমরা পরবর্তী ধাপে অ্যাড করব। আপাতত মেইন মেনুতে ফিরে গিয়ে প্র্যাকটিস মোডটি টেস্ট করুন।', Markup.inlineKeyboard([
-        [Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]
-    ]));
-});
-
-// ----------------- মাস্টার লুপ-ব্রেকার -----------------
 module.exports = async function handler(req, res) {
     if (req.method === 'POST') {
         try {
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 8000));
+            // ৯ সেকেন্ডের সেফটি টাইমআউট
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 9000));
             await Promise.race([bot.handleUpdate(req.body), timeoutPromise]);
-        } catch (error) {
-            console.error("❌ Request Error:", error.message);
-        } finally {
+        } catch (error) {} finally {
             res.status(200).send('OK'); 
         }
     } else {
