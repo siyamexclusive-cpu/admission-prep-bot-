@@ -4,7 +4,10 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// 🔥 API Key চেক করা হচ্ছে 🔥
+const geminiKey = process.env.GEMINI_API_KEY || "MISSING";
+const genAI = new GoogleGenerativeAI(geminiKey);
 
 // ----------------- মেইন মেনু -----------------
 async function sendMainMenu(ctx, chatId) {
@@ -98,10 +101,12 @@ bot.action(/^exam_/, async (ctx) => {
     await generateAndSendQuestion(ctx, ctx.chat.id, subjectName, true, 0, 1);
 });
 
-// ----------------- AI প্রশ্ন তৈরি (সুপার এক্সট্রাক্টর) -----------------
+// ----------------- AI প্রশ্ন তৈরি ও ডিটেক্টর -----------------
 async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score = 0, qNum = 1) {
     let msg;
     try {
+        if (geminiKey === "MISSING") throw new Error("API Key Vercel-এ পাওয়া যায়নি! Environment Variable-এর নাম ঠিক আছে কিনা চেক করুন।");
+
         msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
 
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
@@ -112,15 +117,13 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
         const result = await model.generateContent(prompt);
         let rawText = result.response.text();
 
-        // গুগল এআই-এর অতিরিক্ত কথা কেটে শুধু আসল JSON বের করার কোড
         const startIdx = rawText.indexOf('{');
         const endIdx = rawText.lastIndexOf('}');
-        if (startIdx === -1 || endIdx === -1) throw new Error("JSON not found in AI response");
+        if (startIdx === -1 || endIdx === -1) throw new Error("JSON not found. AI Text: " + rawText.substring(0, 50));
         
         rawText = rawText.substring(startIdx, endIdx + 1);
         const qData = JSON.parse(rawText);
 
-        // ডাটাবেসে নতুন কলাম ছাড়াই পরীক্ষার ডাটা সেভ করার ট্রিক
         qData.is_exam = isExam;
         qData.exam_score = score;
         qData.exam_q_num = qNum;
@@ -128,7 +131,7 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
         await supabase.from('exam_users').update({ current_question: qData }).eq('chat_id', chatId);
 
         const buttons = qData.options.map((opt, idx) => [Markup.button.callback(opt, `ans_${idx}`)]);
-        if (!isExam) buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]); // পরীক্ষার মাঝে মেনু বাটন থাকবে না
+        if (!isExam) buttons.push([Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]);
 
         if (msg) await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(()=>{});
         
@@ -140,7 +143,9 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
         if (msg) await ctx.telegram.deleteMessage(chatId, msg.message_id).catch(() => {});
         
         const retryAction = isExam ? 'main_menu' : `topic_${topic}`;
-        return ctx.reply('❌ প্রশ্ন তৈরি করতে সাময়িক সমস্যা হয়েছে। (Google AI সার্ভার ব্যস্ত)', Markup.inlineKeyboard([
+        
+        // 🔥 আসল এররটি এখানে প্রিন্ট করবে 🔥
+        return ctx.reply(`❌ *সমস্যা ধরা পড়েছে:*\n\`${error.message}\`\n\nএই মেসেজটির একটি স্ক্রিনশট দিন!`, Markup.inlineKeyboard([
             [Markup.button.callback('🔄 আবার চেষ্টা করুন', retryAction)],
             [Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]
         ]));
@@ -159,16 +164,14 @@ bot.action(/^ans_/, async (ctx) => {
 
     const isCorrect = (selectedIdx === qData.correct_option_index);
 
-    // 🔥 লাইভ পরীক্ষার লজিক 🔥
     if (qData.is_exam) {
         ctx.answerCbQuery().catch(()=>{});
         let newScore = isCorrect ? qData.exam_score + 1 : qData.exam_score;
         let nextNum = qData.exam_q_num + 1;
 
-        // আগের প্রশ্নটি ডিলিট করে দেওয়া হলো যেন কেউ আবার উত্তর দিতে না পারে
         await ctx.deleteMessage().catch(()=>{});
 
-        if (nextNum > 5) { // ৫টি প্রশ্ন শেষ হলে রেজাল্ট দেখাবে
+        if (nextNum > 5) { 
             await supabase.from('exam_users').update({ current_question: null }).eq('chat_id', chatId);
             let passStatus = newScore >= 3 ? '✅ *উত্তীর্ণ (Passed!)*' : '❌ *অনুত্তীর্ণ (Failed)*';
             
@@ -179,13 +182,12 @@ bot.action(/^ans_/, async (ctx) => {
                          + `📊 ফলাফল: ${passStatus}`;
                          
             return ctx.reply(finalMsg, Markup.inlineKeyboard([[Markup.button.callback('🏠 মেইন মেনু', 'main_menu')]]));
-        } else { // পরবর্তী প্রশ্ন জেনারেট করবে
+        } else { 
             await generateAndSendQuestion(ctx, chatId, user.selected_subject, true, newScore, nextNum);
             return;
         }
     }
 
-    // 📖 সাধারণ অনুশীলনের লজিক 📖
     let replyText = isCorrect ? `✅ *সঠিক উত্তর!* চমৎকার হয়েছে।\n\n` : `❌ *ভুল উত্তর!* \nসঠিক উত্তরটি হবে: *${qData.options[qData.correct_option_index]}*\n\n`;
 
     if (!isCorrect) {
@@ -236,7 +238,6 @@ bot.action('clear_revision', async (ctx) => {
 module.exports = async function handler(req, res) {
     if (req.method === 'POST') {
         try {
-            // ৯ সেকেন্ডের সেফটি টাইমআউট
             const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 9000));
             await Promise.race([bot.handleUpdate(req.body), timeoutPromise]);
         } catch (error) {} finally {
