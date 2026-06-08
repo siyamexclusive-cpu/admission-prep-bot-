@@ -8,7 +8,7 @@ async function sendMainMenu(ctx, chatId) {
     await supabase.from('exam_users').upsert({ chat_id: chatId, current_step: 'MAIN_MENU' });
     const intro = `🎓 *বিশ্ববিদ্যালয় ভর্তি প্রস্তুতি বটে স্বাগতম!*\n\n`
                 + `আপনার দুর্বল বিষয়গুলোকে শক্তিশালী করতে আমি তৈরি।\n`
-                + `🔹 আনলিমিটেড স্মার্ট প্রশ্ন\n🔹 ভুল উত্তরের বাংলা লেকচার\n🔹 লাইভ পরীক্ষা\n\n`
+                + `🔹 বিগত বছরের কমন প্রশ্ন\n🔹 ভুল উত্তরের বাংলা লেকচার\n🔹 লাইভ পরীক্ষা\n\n`
                 + `👉 *কী করতে চান তা সিলেক্ট করুন:*`;
     
     return ctx.replyWithMarkdown(intro, Markup.inlineKeyboard([
@@ -84,18 +84,27 @@ bot.action(/^exam_/, async (ctx) => {
     await generateAndSendQuestion(ctx, ctx.chat.id, subjectName, true, 0, 1);
 });
 
+// 🔥 বিগত বছরের প্রশ্ন খোঁজার স্পেশাল AI প্রম্পট 🔥
 async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score = 0, qNum = 1) {
     let msg;
     try {
         msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
         
         const apiKey = process.env.GROQ_API_KEY;
+        if (!apiKey || !apiKey.startsWith('gsk_')) throw new Error("⚠️ Vercel-এ GROQ_API_KEY পাওয়া যায়নি!");
         
-        if (!apiKey || !apiKey.startsWith('gsk_')) {
-            throw new Error("⚠️ Vercel-এ GROQ_API_KEY পাওয়া যায়নি! দয়া করে Groq থেকে Key নিয়ে ভেরিয়েবলে সেট করুন।");
-        }
+        const randomSeed = Math.floor(Math.random() * 1000000);
         
-        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a completely new MCQ on the topic: '${topic}'. Reply ONLY with a JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
+        // এখানে AI-কে কঠোর নির্দেশ দেওয়া হয়েছে বিগত বছরের প্রশ্ন দিতে
+        const prompt = `Act as an expert university admission question setter in Bangladesh. 
+        Create a highly standard MCQ on the topic: '${topic}'. 
+        IMPORTANT INSTRUCTIONS:
+        1. The question MUST be strictly at the HSC and University Admission standard of Bangladesh (e.g., Dhaka University, Medical, BUET, RU, JU).
+        2. Give HIGHEST PRIORITY to questions that have actually appeared in previous years' admission tests or HSC board exams. It must be a "Common" and very important question.
+        3. If it is a previous year's question, strictly mention the exam name and year in brackets at the end of the question text (e.g., "Question text here... [DU 2021-22]" or "... [Dhaka Board 2023]").
+        4. Random Seed: ${randomSeed} (Use this to provide a different question each time, but keep it within admission standard).
+        
+        Reply ONLY with a JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation of the answer"}`;
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -104,12 +113,13 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile', // 🔥 এখানে লেটেস্ট Llama 3.3 মডেল আপডেট করা হয়েছে 🔥
+                model: 'llama-3.3-70b-versatile',
                 messages: [
-                    { role: 'system', content: 'You are an API that strictly outputs valid JSON.' },
+                    { role: 'system', content: 'You are a highly creative API that strictly outputs valid JSON.' },
                     { role: 'user', content: prompt }
                 ],
-                response_format: { type: "json_object" }
+                response_format: { type: "json_object" },
+                temperature: 0.8 // স্ট্যান্ডার্ড প্রশ্নের জন্য ব্যালেন্সড টেম্পারেচার
             })
         });
 
