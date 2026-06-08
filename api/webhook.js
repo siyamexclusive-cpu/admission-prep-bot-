@@ -84,47 +84,44 @@ bot.action(/^exam_/, async (ctx) => {
     await generateAndSendQuestion(ctx, ctx.chat.id, subjectName, true, 0, 1);
 });
 
-// 🔥 গুগলের প্যাকেজ ছাড়াই ডাইরেক্ট API কানেকশন 🔥
+// 🔥 গুগলের বদলে নতুন "Groq (Llama 3)" AI সিস্টেম 🔥
 async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score = 0, qNum = 1) {
     let msg;
     try {
         msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
         
-        const apiKey = process.env.GEMINI_API_KEY;
+        const apiKey = process.env.GROQ_API_KEY;
         
-        // সেফটি লক: AQ Key দিলে বট এখানেই আটকে দেবে
-        if (!apiKey || !apiKey.startsWith('AIza')) {
-            throw new Error("⚠️ আপনার API Key ভুল! দয়া করে Vercel-এ 'AQ...' মুছে 'AIzaSy...' দিয়ে শুরু হওয়া Key টি বসান।");
+        if (!apiKey || !apiKey.startsWith('gsk_')) {
+            throw new Error("⚠️ Vercel-এ GROQ_API_KEY পাওয়া যায়নি! দয়া করে Groq থেকে Key নিয়ে ভেরিয়েবলে সেট করুন।");
         }
         
-        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a completely new MCQ on: '${topic}'. Reply ONLY with a JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
+        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a completely new MCQ on the topic: '${topic}'. Reply ONLY with a JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
 
-        const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro", "gemini-1.0-pro"];
-        let rawText = null;
-        let lastErrorMsg = "";
+        // Groq API Call
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'llama3-70b-8192', // লেটেস্ট Llama 3 মডেল
+                messages: [
+                    { role: 'system', content: 'You are an API that strictly outputs valid JSON.' },
+                    { role: 'user', content: prompt }
+                ],
+                response_format: { type: "json_object" }
+            })
+        });
 
-        for (let modelName of modelsToTry) {
-            try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                });
-
-                const data = await response.json();
-                
-                if (response.ok && data.candidates && data.candidates.length > 0) {
-                    rawText = data.candidates[0].content.parts[0].text;
-                    break; // সফল হলে লুপ থেকে বের হয়ে যাবে
-                } else {
-                    lastErrorMsg = data.error?.message || "অজানা এরর";
-                }
-            } catch (e) {
-                lastErrorMsg = e.message;
-            }
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Groq API Error: ${errorData.error?.message || 'অজানা এরর'}`);
         }
 
-        if (!rawText) throw new Error(`Google API ব্লক করেছে: ${lastErrorMsg}`);
+        const data = await response.json();
+        let rawText = data.choices[0].message.content;
         
         const startIdx = rawText.indexOf('{');
         const endIdx = rawText.lastIndexOf('}');
