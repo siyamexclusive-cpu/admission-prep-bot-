@@ -84,7 +84,6 @@ bot.action(/^exam_/, async (ctx) => {
     await generateAndSendQuestion(ctx, ctx.chat.id, subjectName, true, 0, 1);
 });
 
-// 🔥 গুগলের বদলে নতুন "Groq (Llama 3)" AI সিস্টেম 🔥
 async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score = 0, qNum = 1) {
     let msg;
     try {
@@ -98,7 +97,6 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
         
         const prompt = `Act as an expert admission test teacher in Bangladesh. Create a completely new MCQ on the topic: '${topic}'. Reply ONLY with a JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
 
-        // Groq API Call
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
@@ -106,7 +104,7 @@ async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'llama3-70b-8192', // লেটেস্ট Llama 3 মডেল
+                model: 'llama-3.3-70b-versatile', // 🔥 এখানে লেটেস্ট Llama 3.3 মডেল আপডেট করা হয়েছে 🔥
                 messages: [
                     { role: 'system', content: 'You are an API that strictly outputs valid JSON.' },
                     { role: 'user', content: prompt }
