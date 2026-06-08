@@ -1,6 +1,5 @@
 const { Telegraf, Markup } = require('telegraf');
 const { createClient } = require('@supabase/supabase-js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -85,33 +84,47 @@ bot.action(/^exam_/, async (ctx) => {
     await generateAndSendQuestion(ctx, ctx.chat.id, subjectName, true, 0, 1);
 });
 
+// 🔥 গুগলের প্যাকেজ ছাড়াই ডাইরেক্ট API কানেকশন 🔥
 async function generateAndSendQuestion(ctx, chatId, topic, isExam = false, score = 0, qNum = 1) {
     let msg;
     try {
         msg = await ctx.reply('⏳ *নতুন প্রশ্ন তৈরি করা হচ্ছে...*', { parse_mode: 'Markdown' });
-
+        
         const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw new Error("API Key Vercel-এ পাওয়া যায়নি!");
+        
+        // সেফটি লক: AQ Key দিলে বট এখানেই আটকে দেবে
+        if (!apiKey || !apiKey.startsWith('AIza')) {
+            throw new Error("⚠️ আপনার API Key ভুল! দয়া করে Vercel-এ 'AQ...' মুছে 'AIzaSy...' দিয়ে শুরু হওয়া Key টি বসান।");
+        }
+        
+        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a completely new MCQ on: '${topic}'. Reply ONLY with a JSON object exactly like this: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
 
-        // 🔥 সব ধরণের Key সাপোর্ট করবে 🔥
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const prompt = `Act as an expert admission test teacher in Bangladesh. Create a new MCQ on: '${topic}'. Reply ONLY with JSON: {"question": "...", "options": ["A", "B", "C", "D"], "correct_option_index": 0, "explanation": "Provide a brief Bengali explanation"}`;
-
-        const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"];
+        const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro", "gemini-1.0-pro"];
         let rawText = null;
+        let lastErrorMsg = "";
 
         for (let modelName of modelsToTry) {
             try {
-                const model = genAI.getGenerativeModel({ model: modelName });
-                const result = await model.generateContent(prompt);
-                rawText = result.response.text();
-                if (rawText) break;
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok && data.candidates && data.candidates.length > 0) {
+                    rawText = data.candidates[0].content.parts[0].text;
+                    break; // সফল হলে লুপ থেকে বের হয়ে যাবে
+                } else {
+                    lastErrorMsg = data.error?.message || "অজানা এরর";
+                }
             } catch (e) {
-                console.error(`${modelName} failed:`, e.message);
+                lastErrorMsg = e.message;
             }
         }
 
-        if (!rawText) throw new Error("আপনার API Key টি কাজ করছে না। সার্ভার ডাউন থাকতে পারে।");
+        if (!rawText) throw new Error(`Google API ব্লক করেছে: ${lastErrorMsg}`);
         
         const startIdx = rawText.indexOf('{');
         const endIdx = rawText.lastIndexOf('}');
